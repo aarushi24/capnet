@@ -26,7 +26,7 @@ class Node:
 
 	def createFlow(self, flow_specs): 
 		new_flow = flow.Flow(self.env, flow_specs) 
-		yield new_flow.flow.request() # Flow requested by the node
+		#yield new_flow.flow.request() # To be done at sender; Flow requested by the node
 		self.cspace.append(new_flow) # Add flow to CSpace of the node
 		#print(new_flow)
 
@@ -35,6 +35,9 @@ class Node:
 		yield new_rp.rp.request() # Request for parent node to acquire one end of the RP
 		self.parent_rp.append(new_rp)
 		#print(new_rp)
+
+	def releaseRP(self, rp_n):
+		yield rp_n.rp.release()
 
 	def sendCap(self):
                 #yield self.env.timeout(1)
@@ -48,12 +51,40 @@ class Node:
 	def revoke(self):
 		# Remove all flows in cspace of the node
 		for c in self.cspace:
-			c.callback() 
+			c.callback()
+		self.cspace = [] 
 
 	def delete(self, c):
 		# Remove specific flow from cspace
 		c.callback()
+		self.cspace.remove(c)
 
-	#def revoke(self):
-	#	for c in cspace:
-	#		c.block_func.append()
+	def reset(self, reset_node):
+		for p_rp in reset_node.parent_rp:
+			self.env.process(p_rp.detachNode()) 
+			self.env.process(reset_node.releaseRP(p_rp))
+			parent_node = p_rp.init_node
+			parent_node.child_rp.remove(p_rp)
+			self.env.process(parent_node.releaseRP(p_rp))
+			
+		reset_node.parent_rp = []
+		
+		for c_rp in reset_node.child_rp:
+			child_node = c_rp.attached_node
+			if child_node is not None:
+				self.env.process(c_rp.detachNode())
+				child_node.parent_rp.remove(c_rp)
+				self.env.process(child_node.releaseRP(c_rp))
+			self.env.process(reset_node.releaseRP(c_rp))
+
+		reset_node.child_rp = []
+
+		self.env.process(reset_node.revoke())
+
+		for l in reset_node.listener:
+			self.env.process(l.callback())
+
+		self.env.process(take(reset_node))
+
+	def take(self, n):
+		self.env.process(createNode(n))

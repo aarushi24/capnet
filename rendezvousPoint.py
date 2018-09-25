@@ -9,3 +9,6 @@ class RendezvousPoint:
 
 	def attachNode(self, attach_node):
 		self.attached_node = attach_node
+
+	def detachNode(self, attach_node):
+		self.attached_node = None
