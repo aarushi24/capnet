@@ -4,12 +4,13 @@ class RendezvousPoint:
 	def __init__(self, env, parent_node):
 		self.env = env
 		self.init_node = parent_node
-		#self.attached_nodes = []
+		self.attached_nodes = []
 		# create rp container
 		self.rp = simpy.Resource(self.env, capacity=2)
 		self.capacity = simpy.core.Infinity
 		self.pipes = []
 		self.membrane = []
+		self.env.process(self.init_node.createRendezvousPoint(self))
 
 	def put(self, value):
 		if not self.pipes:
