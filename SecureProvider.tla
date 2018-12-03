@@ -11,26 +11,34 @@ variables
     completeInstall = FALSE,
     useService = FALSE,
     rp = [n \in Nodes |-> NULL],
-    mem = [n \in Nodes |-> NULL];
+    mem = [n \in Nodes |-> NULL],
+    p_rp0 = <<>>,
+    c_rp0 = <<>>;
 
 define
    Completion == (completeInstall) ~> <>[](useService) 
 end define;
 
 macro checkIsolation(node) begin
-    with rp_set = rp[node] \intersect {"p_rp0"} do
+    with rp_set = rp[node] \intersect {p_rp0} do
         with n \in Nodes \ {node} do
              assert rp[n] \intersect rp_set = {}; 
         end with;
     end with;
 end macro;
 
+macro recv(node, queue) begin
+    
+end macro;
+
 macro secureProvider() begin
+    \* TODO: wrap c_rp0 in mem
+    p_rp0 := Append(p_rp0, c_rp0);
     requestInstall := TRUE;
 end macro; 
 
 macro installService() begin
-    checkIsolation(Consumer);
+    \*checkIsolation(NewNode);
     startInstall := TRUE;
 end macro;
 
@@ -46,7 +54,7 @@ end macro;
 fair process client = Consumer
 begin
     Start_c:
-        rp[Consumer] := {"c_rp0", "p_rp0"};
+        rp[Consumer] := {c_rp0, p_rp0};
         mem[Consumer] := {"mem"};
         secureProvider();
         await completeInstall;
@@ -56,8 +64,12 @@ end process;
 fair process server = Provider
 begin
     Start_p:
-        rp[Provider] := {"p_rp0"};
+        rp[Provider] := {p_rp0};
         await requestInstall;
+        goto Install;
+    Install:
+        await p_rp0 /= <<>>;
+        rp[Provider] := rp[Provider] \union {Head(p_rp0)};
         installService();
         sendBack();
 end process; 
@@ -66,14 +78,14 @@ end algorithm;*)
 
 \* BEGIN TRANSLATION
 VARIABLES Nodes, requestInstall, startInstall, completeInstall, useService, 
-          rp, mem, pc
+          rp, mem, p_rp0, c_rp0, pc
 
 (* define statement *)
 Completion == (completeInstall) ~> <>[](useService)
 
 
 vars == << Nodes, requestInstall, startInstall, completeInstall, useService, 
-           rp, mem, pc >>
+           rp, mem, p_rp0, c_rp0, pc >>
 
 ProcSet == {Consumer} \cup {Provider}
 
@@ -85,37 +97,44 @@ Init == (* Global variables *)
         /\ useService = FALSE
         /\ rp = [n \in Nodes |-> NULL]
         /\ mem = [n \in Nodes |-> NULL]
+        /\ p_rp0 = <<>>
+        /\ c_rp0 = <<>>
         /\ pc = [self \in ProcSet |-> CASE self = Consumer -> "Start_c"
                                         [] self = Provider -> "Start_p"]
 
 Start_c == /\ pc[Consumer] = "Start_c"
-           /\ rp' = [rp EXCEPT ![Consumer] = {"c_rp0", "p_rp0"}]
+           /\ rp' = [rp EXCEPT ![Consumer] = {c_rp0, p_rp0}]
            /\ mem' = [mem EXCEPT ![Consumer] = {"mem"}]
+           /\ p_rp0' = Append(p_rp0, c_rp0)
            /\ requestInstall' = TRUE
            /\ completeInstall
-           /\ LET rp_set == rp'[Provider] \intersect {"p_rp0"} IN
+           /\ LET rp_set == rp'[Provider] \intersect {p_rp0'} IN
                 \E n \in Nodes \ {Provider}:
                   Assert(rp'[n] \intersect rp_set = {}, 
-                         "Failure of assertion at line 23, column 14 of macro called at line 53, column 9.")
+                         "Failure of assertion at line 25, column 14 of macro called at line 61, column 9.")
            /\ useService' = TRUE
            /\ pc' = [pc EXCEPT ![Consumer] = "Done"]
-           /\ UNCHANGED << Nodes, startInstall, completeInstall >>
+           /\ UNCHANGED << Nodes, startInstall, completeInstall, c_rp0 >>
 
 client == Start_c
 
 Start_p == /\ pc[Provider] = "Start_p"
-           /\ rp' = [rp EXCEPT ![Provider] = {"p_rp0"}]
+           /\ rp' = [rp EXCEPT ![Provider] = {p_rp0}]
            /\ requestInstall
-           /\ LET rp_set == rp'[Consumer] \intersect {"p_rp0"} IN
-                \E n \in Nodes \ {Consumer}:
-                  Assert(rp'[n] \intersect rp_set = {}, 
-                         "Failure of assertion at line 23, column 14 of macro called at line 61, column 9.")
+           /\ pc' = [pc EXCEPT ![Provider] = "Install"]
+           /\ UNCHANGED << Nodes, requestInstall, startInstall, 
+                           completeInstall, useService, mem, p_rp0, c_rp0 >>
+
+Install == /\ pc[Provider] = "Install"
+           /\ p_rp0 /= <<>>
+           /\ rp' = [rp EXCEPT ![Provider] = rp[Provider] \union {Head(p_rp0)}]
            /\ startInstall' = TRUE
            /\ completeInstall' = TRUE
            /\ pc' = [pc EXCEPT ![Provider] = "Done"]
-           /\ UNCHANGED << Nodes, requestInstall, useService, mem >>
+           /\ UNCHANGED << Nodes, requestInstall, useService, mem, p_rp0, 
+                           c_rp0 >>
 
-server == Start_p
+server == Start_p \/ Install
 
 Next == client \/ server
            \/ (* Disjunct to prevent deadlock on termination *)
@@ -131,5 +150,5 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Sun Dec 02 21:07:44 MST 2018 by aarushi
+\* Last modified Mon Dec 03 12:21:50 MST 2018 by aarushi
 \* Created Mon Nov 05 10:01:52 MST 2018 by aarushi
