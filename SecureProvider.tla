@@ -13,6 +13,10 @@ variables
     rp = [n \in Nodes |-> NULL],
     mem = [n \in Nodes |-> NULL];
 
+define
+   Completion == (completeInstall) ~> <>[](useService) 
+end define;
+
 macro checkIsolation(node) begin
     with rp_set = rp[node] \intersect {"p_rp0"} do
         with n \in Nodes \ {node} do
@@ -39,7 +43,7 @@ macro checkService() begin
     useService := TRUE;
 end macro;
 
-process client = Consumer
+fair process client = Consumer
 begin
     Start_c:
         rp[Consumer] := {"c_rp0", "p_rp0"};
@@ -49,7 +53,7 @@ begin
         checkService();
 end process;
 
-process server = Provider
+fair process server = Provider
 begin
     Start_p:
         rp[Provider] := {"p_rp0"};
@@ -63,6 +67,10 @@ end algorithm;*)
 \* BEGIN TRANSLATION
 VARIABLES Nodes, requestInstall, startInstall, completeInstall, useService, 
           rp, mem, pc
+
+(* define statement *)
+Completion == (completeInstall) ~> <>[](useService)
+
 
 vars == << Nodes, requestInstall, startInstall, completeInstall, useService, 
            rp, mem, pc >>
@@ -88,7 +96,7 @@ Start_c == /\ pc[Consumer] = "Start_c"
            /\ LET rp_set == rp'[Provider] \intersect {"p_rp0"} IN
                 \E n \in Nodes \ {Provider}:
                   Assert(rp'[n] \intersect rp_set = {}, 
-                         "Failure of assertion at line 19, column 14 of macro called at line 49, column 9.")
+                         "Failure of assertion at line 23, column 14 of macro called at line 53, column 9.")
            /\ useService' = TRUE
            /\ pc' = [pc EXCEPT ![Consumer] = "Done"]
            /\ UNCHANGED << Nodes, startInstall, completeInstall >>
@@ -101,7 +109,7 @@ Start_p == /\ pc[Provider] = "Start_p"
            /\ LET rp_set == rp'[Consumer] \intersect {"p_rp0"} IN
                 \E n \in Nodes \ {Consumer}:
                   Assert(rp'[n] \intersect rp_set = {}, 
-                         "Failure of assertion at line 19, column 14 of macro called at line 57, column 9.")
+                         "Failure of assertion at line 23, column 14 of macro called at line 61, column 9.")
            /\ startInstall' = TRUE
            /\ completeInstall' = TRUE
            /\ pc' = [pc EXCEPT ![Provider] = "Done"]
@@ -113,7 +121,9 @@ Next == client \/ server
            \/ (* Disjunct to prevent deadlock on termination *)
               ((\A self \in ProcSet: pc[self] = "Done") /\ UNCHANGED vars)
 
-Spec == Init /\ [][Next]_vars
+Spec == /\ Init /\ [][Next]_vars
+        /\ WF_vars(client)
+        /\ WF_vars(server)
 
 Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
@@ -121,5 +131,5 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Sun Dec 02 19:37:55 MST 2018 by aarushi
+\* Last modified Sun Dec 02 21:07:44 MST 2018 by aarushi
 \* Created Mon Nov 05 10:01:52 MST 2018 by aarushi
