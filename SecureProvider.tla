@@ -15,6 +15,7 @@ variables
     node_cap = [n \in Nodes |-> NULL],
     p_rp0 = <<>>,
     c_rp0 = <<>>;
+    n_rp0 = <<>>;
 
 define
    Completion == (completeInstall) ~> <>[](useService) 
@@ -46,12 +47,11 @@ macro installService(node) begin
     startInstall := TRUE;
 end macro;
 
-macro sendBack(node) begin
-    c_rp0 := Append(c_rp0, node);
+macro sendBack(new_rp) begin
+    c_rp0 := Append(c_rp0, new_rp);
 end macro;
 
 macro checkService(node) begin
-    \*resetNode(node);
     checkIsolation(node);
     useService := TRUE;
 end macro;
@@ -65,43 +65,53 @@ return;
 end procedure;
 
 fair process client = Consumer
+variables
+    recv_rp
 begin
     Start_c:
-        rp[Consumer] := {c_rp0, p_rp0};
-        mem[Consumer] := {"mem"};
+        rp[Consumer] := {c_rp0, p_rp0} ||
+        rp[NewNode] := {n_rp0};
+        mem[Consumer] := {"c_mem"};
         node_cap[Consumer] := {NewNode};
-        \*rp[NewNode] := {"n_rp0"};
         secureProvider();
-        goto Service;
-    Service:
+    WaitForService:
         await completeInstall /\ c_rp0 /= <<>>;
-        with recv_node = Head(c_rp0) do
-            node_cap[Consumer] := node_cap[Consumer] \union {recv_node};
-            checkService(recv_node);
-        end with;
+    Service:
+        while c_rp0 /= <<>> do
+            recv_rp := Head(c_rp0);
+            c_rp0 := Tail(c_rp0);
+            rp[Consumer] := rp[Consumer] \union {recv_rp};
+            call resetNode(node);
+            UseService:
+                checkService(NewNode);
+        end while;
 end process;
 
 fair process server = Provider
+variables 
+    new_rp, new_node;
 begin
     Start_p:
         rp[Provider] := {p_rp0};
         await requestInstall;
-        goto Install;
     Install:
         await p_rp0 /= <<>>;
-        with new_rp = Head(p_rp0) do 
-            rp[Provider] := rp[Provider] \union {new_rp};
-            await new_rp /= <<>>;
-            \*while new_rp /= <<>> do
-            with new_node = Head(new_rp) do
+        new_rp := Head(p_rp0);
+        p_rp0 := Tail(p_rp0);
+        rp[Provider] := rp[Provider] \union {new_rp};
+        await new_rp /= <<>>;
+    GetCap:
+        while new_rp /= <<>> do
+            new_node := Head(new_rp);
+            new_rp := Tail(new_rp);
+            call resetNode(new_node);
+            StartInstall:
                 node_cap[Provider] := node_cap[Provider] \union {new_node};
-                \*call resetNode(new_node);
-                \*rp[Provider] := rp[Provider] \union {"n_rp0"};
+                rp[Provider] := rp[Provider] \union {n_rp0};
                 installService(new_node);
-                sendBack(new_node); \* TODO: Send back RP not node!
+                sendBack(n_rp0); 
                 completeInstall := TRUE;
-            end with;
-        end with;
+        end while;
 end process; 
 
 end algorithm;*)
@@ -109,15 +119,16 @@ end algorithm;*)
 \* BEGIN TRANSLATION
 CONSTANT defaultInitValue
 VARIABLES Nodes, requestInstall, startInstall, completeInstall, useService, 
-          rp, mem, node_cap, p_rp0, c_rp0, pc, stack
+          rp, mem, node_cap, p_rp0, c_rp0, n_rp0, pc, stack
 
 (* define statement *)
 Completion == (completeInstall) ~> <>[](useService)
 
-VARIABLE node
+VARIABLES node, recv_rp, new_rp, new_node
 
 vars == << Nodes, requestInstall, startInstall, completeInstall, useService, 
-           rp, mem, node_cap, p_rp0, c_rp0, pc, stack, node >>
+           rp, mem, node_cap, p_rp0, c_rp0, n_rp0, pc, stack, node, recv_rp, 
+           new_rp, new_node >>
 
 ProcSet == {Consumer} \cup {Provider}
 
@@ -132,8 +143,14 @@ Init == (* Global variables *)
         /\ node_cap = [n \in Nodes |-> NULL]
         /\ p_rp0 = <<>>
         /\ c_rp0 = <<>>
+        /\ n_rp0 = <<>>
         (* Procedure resetNode *)
         /\ node = [ self \in ProcSet |-> defaultInitValue]
+        (* Process client *)
+        /\ recv_rp = defaultInitValue
+        (* Process server *)
+        /\ new_rp = defaultInitValue
+        /\ new_node = defaultInitValue
         /\ stack = [self \in ProcSet |-> << >>]
         /\ pc = [self \in ProcSet |-> CASE self = Consumer -> "Start_c"
                                         [] self = Provider -> "Start_p"]
@@ -146,35 +163,59 @@ Reset(self) == /\ pc[self] = "Reset"
                /\ stack' = [stack EXCEPT ![self] = Tail(stack[self])]
                /\ UNCHANGED << Nodes, requestInstall, startInstall, 
                                completeInstall, useService, mem, node_cap, 
-                               p_rp0, c_rp0 >>
+                               p_rp0, c_rp0, n_rp0, recv_rp, new_rp, new_node >>
 
 resetNode(self) == Reset(self)
 
 Start_c == /\ pc[Consumer] = "Start_c"
-           /\ rp' = [rp EXCEPT ![Consumer] = {c_rp0, p_rp0}]
-           /\ mem' = [mem EXCEPT ![Consumer] = {"mem"}]
+           /\ rp' = [rp EXCEPT ![Consumer] = {c_rp0, p_rp0},
+                               ![NewNode] = {n_rp0}]
+           /\ mem' = [mem EXCEPT ![Consumer] = {"c_mem"}]
            /\ node_cap' = [node_cap EXCEPT ![Consumer] = {NewNode}]
            /\ p_rp0' = Append(p_rp0, c_rp0)
            /\ c_rp0' = Append(c_rp0, NewNode)
            /\ requestInstall' = TRUE
-           /\ pc' = [pc EXCEPT ![Consumer] = "Service"]
+           /\ pc' = [pc EXCEPT ![Consumer] = "WaitForService"]
            /\ UNCHANGED << Nodes, startInstall, completeInstall, useService, 
-                           stack, node >>
+                           n_rp0, stack, node, recv_rp, new_rp, new_node >>
+
+WaitForService == /\ pc[Consumer] = "WaitForService"
+                  /\ completeInstall /\ c_rp0 /= <<>>
+                  /\ pc' = [pc EXCEPT ![Consumer] = "Service"]
+                  /\ UNCHANGED << Nodes, requestInstall, startInstall, 
+                                  completeInstall, useService, rp, mem, 
+                                  node_cap, p_rp0, c_rp0, n_rp0, stack, node, 
+                                  recv_rp, new_rp, new_node >>
 
 Service == /\ pc[Consumer] = "Service"
-           /\ completeInstall /\ c_rp0 /= <<>>
-           /\ LET recv_node == Head(c_rp0) IN
-                /\ node_cap' = [node_cap EXCEPT ![Consumer] = node_cap[Consumer] \union {recv_node}]
-                /\ LET rp_set == rp[recv_node] IN
-                     \E n \in Nodes \ {recv_node}:
-                       Assert(rp[n] \intersect rp_set = {}, 
-                              "Failure of assertion at line 26, column 14 of macro called at line 80, column 13.")
-                /\ useService' = TRUE
-           /\ pc' = [pc EXCEPT ![Consumer] = "Done"]
+           /\ IF c_rp0 /= <<>>
+                 THEN /\ recv_rp' = Head(c_rp0)
+                      /\ c_rp0' = Tail(c_rp0)
+                      /\ rp' = [rp EXCEPT ![Consumer] = rp[Consumer] \union {recv_rp'}]
+                      /\ /\ node' = [node EXCEPT ![Consumer] = node[Consumer]]
+                         /\ stack' = [stack EXCEPT ![Consumer] = << [ procedure |->  "resetNode",
+                                                                      pc        |->  "UseService",
+                                                                      node      |->  node[Consumer] ] >>
+                                                                  \o stack[Consumer]]
+                      /\ pc' = [pc EXCEPT ![Consumer] = "Reset"]
+                 ELSE /\ pc' = [pc EXCEPT ![Consumer] = "Done"]
+                      /\ UNCHANGED << rp, c_rp0, stack, node, recv_rp >>
            /\ UNCHANGED << Nodes, requestInstall, startInstall, 
-                           completeInstall, rp, mem, p_rp0, c_rp0, stack, node >>
+                           completeInstall, useService, mem, node_cap, p_rp0, 
+                           n_rp0, new_rp, new_node >>
 
-client == Start_c \/ Service
+UseService == /\ pc[Consumer] = "UseService"
+              /\ LET rp_set == rp[NewNode] IN
+                   \E n \in Nodes \ {NewNode}:
+                     Assert(rp[n] \intersect rp_set = {}, 
+                            "Failure of assertion at line 27, column 14 of macro called at line 86, column 17.")
+              /\ useService' = TRUE
+              /\ pc' = [pc EXCEPT ![Consumer] = "Service"]
+              /\ UNCHANGED << Nodes, requestInstall, startInstall, 
+                              completeInstall, rp, mem, node_cap, p_rp0, c_rp0, 
+                              n_rp0, stack, node, recv_rp, new_rp, new_node >>
+
+client == Start_c \/ WaitForService \/ Service \/ UseService
 
 Start_p == /\ pc[Provider] = "Start_p"
            /\ rp' = [rp EXCEPT ![Provider] = {p_rp0}]
@@ -182,27 +223,51 @@ Start_p == /\ pc[Provider] = "Start_p"
            /\ pc' = [pc EXCEPT ![Provider] = "Install"]
            /\ UNCHANGED << Nodes, requestInstall, startInstall, 
                            completeInstall, useService, mem, node_cap, p_rp0, 
-                           c_rp0, stack, node >>
+                           c_rp0, n_rp0, stack, node, recv_rp, new_rp, 
+                           new_node >>
 
 Install == /\ pc[Provider] = "Install"
            /\ p_rp0 /= <<>>
-           /\ LET new_rp == Head(p_rp0) IN
-                /\ rp' = [rp EXCEPT ![Provider] = rp[Provider] \union {new_rp}]
-                /\ new_rp /= <<>>
-                /\ LET new_node == Head(new_rp) IN
-                     /\ node_cap' = [node_cap EXCEPT ![Provider] = node_cap[Provider] \union {new_node}]
-                     /\ LET rp_set == rp'[new_node] IN
-                          \E n \in Nodes \ {new_node}:
-                            Assert(rp'[n] \intersect rp_set = {}, 
-                                   "Failure of assertion at line 26, column 14 of macro called at line 100, column 17.")
-                     /\ startInstall' = TRUE
-                     /\ c_rp0' = Append(c_rp0, new_node)
-                     /\ completeInstall' = TRUE
-           /\ pc' = [pc EXCEPT ![Provider] = "Done"]
-           /\ UNCHANGED << Nodes, requestInstall, useService, mem, p_rp0, 
-                           stack, node >>
+           /\ new_rp' = Head(p_rp0)
+           /\ p_rp0' = Tail(p_rp0)
+           /\ rp' = [rp EXCEPT ![Provider] = rp[Provider] \union {new_rp'}]
+           /\ new_rp' /= <<>>
+           /\ pc' = [pc EXCEPT ![Provider] = "GetCap"]
+           /\ UNCHANGED << Nodes, requestInstall, startInstall, 
+                           completeInstall, useService, mem, node_cap, c_rp0, 
+                           n_rp0, stack, node, recv_rp, new_node >>
 
-server == Start_p \/ Install
+GetCap == /\ pc[Provider] = "GetCap"
+          /\ IF new_rp /= <<>>
+                THEN /\ new_node' = Head(new_rp)
+                     /\ new_rp' = Tail(new_rp)
+                     /\ /\ node' = [node EXCEPT ![Provider] = new_node']
+                        /\ stack' = [stack EXCEPT ![Provider] = << [ procedure |->  "resetNode",
+                                                                     pc        |->  "StartInstall",
+                                                                     node      |->  node[Provider] ] >>
+                                                                 \o stack[Provider]]
+                     /\ pc' = [pc EXCEPT ![Provider] = "Reset"]
+                ELSE /\ pc' = [pc EXCEPT ![Provider] = "Done"]
+                     /\ UNCHANGED << stack, node, new_rp, new_node >>
+          /\ UNCHANGED << Nodes, requestInstall, startInstall, completeInstall, 
+                          useService, rp, mem, node_cap, p_rp0, c_rp0, n_rp0, 
+                          recv_rp >>
+
+StartInstall == /\ pc[Provider] = "StartInstall"
+                /\ node_cap' = [node_cap EXCEPT ![Provider] = node_cap[Provider] \union {new_node}]
+                /\ rp' = [rp EXCEPT ![Provider] = rp[Provider] \union {n_rp0}]
+                /\ LET rp_set == rp'[new_node] IN
+                     \E n \in Nodes \ {new_node}:
+                       Assert(rp'[n] \intersect rp_set = {}, 
+                              "Failure of assertion at line 27, column 14 of macro called at line 111, column 17.")
+                /\ startInstall' = TRUE
+                /\ c_rp0' = Append(c_rp0, n_rp0)
+                /\ completeInstall' = TRUE
+                /\ pc' = [pc EXCEPT ![Provider] = "GetCap"]
+                /\ UNCHANGED << Nodes, requestInstall, useService, mem, p_rp0, 
+                                n_rp0, stack, node, recv_rp, new_rp, new_node >>
+
+server == Start_p \/ Install \/ GetCap \/ StartInstall
 
 Next == client \/ server
            \/ (\E self \in ProcSet: resetNode(self))
@@ -210,8 +275,8 @@ Next == client \/ server
               ((\A self \in ProcSet: pc[self] = "Done") /\ UNCHANGED vars)
 
 Spec == /\ Init /\ [][Next]_vars
-        /\ WF_vars(client)
-        /\ WF_vars(server)
+        /\ WF_vars(client) /\ WF_vars(resetNode(Consumer))
+        /\ WF_vars(server) /\ WF_vars(resetNode(Provider))
 
 Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
@@ -219,5 +284,5 @@ Termination == <>(\A self \in ProcSet: pc[self] = "Done")
 
 =============================================================================
 \* Modification History
-\* Last modified Mon Dec 03 15:02:49 MST 2018 by aarushi
+\* Last modified Wed Dec 19 08:59:35 MST 2018 by aarushi
 \* Created Mon Nov 05 10:01:52 MST 2018 by aarushi
