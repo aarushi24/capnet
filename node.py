@@ -14,6 +14,7 @@ class Node:
 		self.node_owners = [] # all the Nodes that hold cap to it
 		self.my_membrane = [] # membranes it inherits or creates
 		self.membrane = []
+		self.my_sealer = []
 			
 	def addNodeCap(self, new_node, t):
 		yield self.env.timeout(t)
